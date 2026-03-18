@@ -8,7 +8,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from stt_ai.exceptions import STTError, AuthError, RateLimitError, CreditError
+from sttai.exceptions import STTError, AuthError, RateLimitError, CreditError
 
 
 class STTClient:
@@ -26,7 +26,7 @@ class STTClient:
 
     Example::
 
-        from stt_ai import STTClient
+        from sttai import STTClient
 
         client = STTClient("your-api-key")
         result = client.transcribe("meeting.mp3")

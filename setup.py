@@ -3,7 +3,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="stt-ai",
+    name="sttai",
     version="0.1.0",
     description="Official Python SDK for STT.ai - Speech-to-Text API",
     long_description=open("README.md").read(),

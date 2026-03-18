@@ -7,13 +7,13 @@ Transcribe audio and video files with state-of-the-art Whisper models, speaker d
 ## Installation
 
 ```bash
-pip install stt-ai
+pip install sttai
 ```
 
 ## Quick Start
 
 ```python
-from stt_ai import STTClient
+from sttai import STTClient
 
 client = STTClient("your-api-key")
 
@@ -124,7 +124,7 @@ print("\nFinal:", result["text"])
 The SDK raises specific exceptions for different error types:
 
 ```python
-from stt_ai import STTClient, AuthError, RateLimitError, CreditError, STTError
+from sttai import STTClient, AuthError, RateLimitError, CreditError, STTError
 
 client = STTClient("your-api-key")
 
