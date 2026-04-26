@@ -33,7 +33,8 @@ class STTClient:
         print(result["text"])
     """
 
-    def __init__(self, api_key=None, base_url="https://api.stt.ai", timeout=300):
+    def __init__(self, api_key=None, base_url="https://api.stt.ai",
+                 web_base_url="https://stt.ai", timeout=300):
         self.api_key = api_key or os.environ.get("STT_API_KEY")
         if not self.api_key:
             raise AuthError(
@@ -41,6 +42,9 @@ class STTClient:
                 "STT_API_KEY environment variable."
             )
         self.base_url = base_url.rstrip("/")
+        # Transcript-management endpoints (list, get, chat, etc.) live on the
+        # Django web app at stt.ai/api/v1/, not the GPU API at api.stt.ai.
+        self.web_base_url = web_base_url.rstrip("/")
         self.timeout = timeout
         self._session = requests.Session()
         self._session.headers.update({
@@ -254,6 +258,176 @@ class STTClient:
         response = requests.get(
             "{}/health".format(self.base_url),
             timeout=30,
+        )
+        return self._handle_response(response)
+
+    # ------------------------------------------------------------------
+    # Transcript management — live on the Django web app at stt.ai/api/v1/
+    # ------------------------------------------------------------------
+
+    def list_transcripts(self, limit=20, offset=0, status=None):
+        """List your transcripts.
+
+        Args:
+            limit: Max number of transcripts to return (default 20).
+            offset: Number of transcripts to skip (for pagination).
+            status: Filter by status — ``"completed"``, ``"processing"``,
+                ``"failed"``, etc. ``None`` returns all.
+
+        Returns:
+            dict: ``{"results": [...], "count": int, "next": str|None,
+            "previous": str|None}``.
+        """
+        params = {"limit": limit, "offset": offset}
+        if status:
+            params["status"] = status
+        response = self._session.get(
+            "{}/api/v1/transcripts/".format(self.web_base_url),
+            params=params,
+            timeout=self.timeout,
+        )
+        return self._handle_response(response)
+
+    def get_transcript(self, transcript_id):
+        """Fetch a single transcript with its segments and metadata.
+
+        Args:
+            transcript_id: Numeric transcript ID OR slug (the URL fragment).
+
+        Returns:
+            dict: Full transcript including ``segments``, ``speakers``,
+            ``summary`` (if generated), and metadata.
+        """
+        response = self._session.get(
+            "{}/api/v1/transcripts/{}/".format(self.web_base_url, transcript_id),
+            timeout=self.timeout,
+        )
+        return self._handle_response(response)
+
+    def export_transcript(self, transcript_id, fmt="txt"):
+        """Download a transcript in a specific format.
+
+        Args:
+            transcript_id: Numeric ID or slug.
+            fmt: Output format — ``"txt"``, ``"srt"``, ``"vtt"``, ``"json"``,
+                ``"csv"``, ``"docx"``, ``"pdf"``.
+
+        Returns:
+            For text formats (txt/srt/vtt/csv/json): the raw response text.
+            For binary formats (docx/pdf): the raw bytes.
+        """
+        response = self._session.get(
+            "{}/api/v1/transcripts/{}/export/{}/".format(
+                self.web_base_url, transcript_id, fmt
+            ),
+            timeout=self.timeout,
+        )
+        if not response.ok:
+            return self._handle_response(response)
+        if fmt in ("docx", "pdf"):
+            return response.content
+        return response.text
+
+    def transcript_summarize(self, transcript_id, force=False):
+        """Get or generate an AI summary for an existing transcript.
+
+        Args:
+            transcript_id: Numeric ID or slug.
+            force: If ``True``, regenerate even if cached. Otherwise returns
+                the cached summary when available.
+
+        Returns:
+            dict: ``{"summary": str, "topics": [...], ...}``.
+        """
+        if force:
+            response = self._session.post(
+                "{}/api/v1/transcripts/{}/summarize/".format(
+                    self.web_base_url, transcript_id
+                ),
+                timeout=self.timeout,
+            )
+        else:
+            response = self._session.get(
+                "{}/api/v1/transcripts/{}/summarize/".format(
+                    self.web_base_url, transcript_id
+                ),
+                timeout=self.timeout,
+            )
+        return self._handle_response(response)
+
+    def transcript_analyze(self, transcript_id, kinds=None):
+        """Run AI analysis on a transcript: sentiment, topics, entities,
+        action items, questions, PII redaction.
+
+        Args:
+            transcript_id: Numeric ID or slug.
+            kinds: List of analysis kinds to run, or ``None`` for all.
+                E.g. ``["sentiment", "action_items"]``.
+
+        Returns:
+            dict: Analysis results keyed by kind.
+        """
+        payload = {}
+        if kinds:
+            payload["kinds"] = kinds
+        response = self._session.post(
+            "{}/api/v1/transcripts/{}/analyze/".format(
+                self.web_base_url, transcript_id
+            ),
+            json=payload,
+            timeout=self.timeout,
+        )
+        return self._handle_response(response)
+
+    def transcript_generate(self, transcript_id, kind, prompt=None):
+        """Generate content from a transcript: blog post, social media,
+        meeting notes, study guide, flashcards, quiz.
+
+        Args:
+            transcript_id: Numeric ID or slug.
+            kind: One of ``"blog_post"``, ``"social_twitter"``,
+                ``"social_linkedin"``, ``"meeting_notes"``, ``"study_guide"``,
+                ``"flashcards"``, ``"quiz"``, ``"newsletter"``,
+                ``"podcast_show_notes"``.
+            prompt: Optional custom instruction to steer generation.
+
+        Returns:
+            dict: ``{"content": str, ...}``.
+        """
+        payload = {"kind": kind}
+        if prompt:
+            payload["prompt"] = prompt
+        response = self._session.post(
+            "{}/api/v1/transcripts/{}/generate/".format(
+                self.web_base_url, transcript_id
+            ),
+            json=payload,
+            timeout=self.timeout,
+        )
+        return self._handle_response(response)
+
+    def transcript_chat(self, transcript_id, message, session_id=None):
+        """Ask a question about a transcript via RAG. Cites source segments.
+
+        Args:
+            transcript_id: Numeric ID or slug.
+            message: The user's question.
+            session_id: Optional session ID to maintain conversation context
+                across multiple chat() calls.
+
+        Returns:
+            dict: ``{"answer": str, "sources": [{"segment_id": ...,
+            "text": ...}, ...], "session_id": str}``.
+        """
+        payload = {"message": message}
+        if session_id:
+            payload["session_id"] = session_id
+        response = self._session.post(
+            "{}/api/v1/transcripts/{}/chat/".format(
+                self.web_base_url, transcript_id
+            ),
+            json=payload,
+            timeout=self.timeout,
         )
         return self._handle_response(response)
 
